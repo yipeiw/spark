@@ -82,7 +82,7 @@ object GridHITS {
 class HITSSuite extends SparkFunSuite with LocalSparkContext {
 
   def compareRanks(a: VertexRDD[Score], b: VertexRDD[Score]): Double = {
-    a.leftJoin(b) { case (id, a, bOpt) => (a._1 - bOpt.getOrElse((0.0, 0.0))._1) * (a._1 - bOpt.getOrElse((0.0, 0.0))._1) + (a._2 - bOpt.getOrElse((0.0, 0.0))._2) * (a._2 - bOpt.getOrElse((0.0, 0.0))._2) }
+    a.leftJoin(b) { case (id, a, bOpt) => pow(a.authority - bOpt.getOrElse(Score(0.0, 0.0)).authority, 2) + pow(a.hub - bOpt.getOrElse(Score(0.0, 0.0)).hub, 2) }
       .map { case (id, error) => error }.sum()
 
   }
@@ -93,22 +93,22 @@ class HITSSuite extends SparkFunSuite with LocalSparkContext {
       val starGraph = GraphGenerators.starGraph(sc, nVertices).cache()
       val errorTol = 1.0e-5
 
-      /*val staticRanks1 = starGraph.staticHITS(numIter = 1).vertices
+      val staticRanks1 = starGraph.staticHITS(numIter = 1).vertices
       val staticRanks2 = starGraph.staticHITS(numIter = 2).vertices.cache()
 
       // Static HITS should only take 2 iterations to converge
-      val notMatching = staticRanks1.innerZipJoin(staticRanks2) { (vid, pr1, pr2) =>
-        if (pr1 != pr2) 1 else 0
+      val notMatching = staticRanks1.innerZipJoin(staticRanks2) { (vid, score1, score2) =>
+        if (score1.authority != score2.authority || score1.hub != score2.hub) 1 else 0
       }.map { case (vid, test) => test }.sum()
       assert(notMatching === 0)
 
-      val staticErrors = staticRanks2.map { case (vid, pr) =>
-        val p = math.abs(pr - (resetProb + (1.0 - resetProb) * (resetProb * (nVertices - 1)) ))
-        val correct = (vid > 0 && pr == resetProb) || (vid == 0L && p < 1.0E-5)
+      val refHub = 1/nVertices
+      val staticErrors = staticRanks2.map { case (vid, score) =>
+        val hubDiff = math.abs(score.hub - refHub)
+        val correct = (vid > 0 && score.authority == 0.0 && hubDiff < errorTol) || (vid == 0L && score.authority == 1.0 && score.hub == 0.0)
         if (!correct) 1 else 0
       }
-      assert(staticErrors.sum === 0)*/
-
+      assert(staticErrors.sum === 0)
     }
   } // end of test Star HITS
 
@@ -116,32 +116,17 @@ class HITSSuite extends SparkFunSuite with LocalSparkContext {
     withSpark { sc =>
       val rows = 10
       val cols = 10
-      val tol = 0.0001
       val numIter = 50
       val errorTol = 1.0e-5
       val gridGraph = GraphGenerators.gridGraph(sc, rows, cols).cache()
 
-      /*val staticRanks = gridGraph.staticHITS(numIter, resetProb).vertices.cache()
+      val staticRanks = gridGraph.staticHITS(numIter).vertices.cache()
       val referenceRanks = VertexRDD(
-        sc.parallelize(GridHITS(rows, cols, numIter, resetProb))).cache()
+        sc.parallelize(GridHITS(rows, cols, numIter))).cache()
 
-      assert(compareRanks(staticRanks, referenceRanks) < errorTol)*/
+      assert(compareRanks(staticRanks, referenceRanks) < errorTol)
     }
   } // end of Grid HITS
 
-  test("Chain HITS") {
-    withSpark { sc =>
-      val chain1 = (0 until 9).map(x => (x, x + 1))
-      val rawEdges = sc.parallelize(chain1, 1).map { case (s, d) => (s.toLong, d.toLong) }
-      val chain = Graph.fromEdgeTuples(rawEdges, 1.0).cache()
-      val tol = 0.0001
-      val numIter = 10
-      val errorTol = 1.0e-5
-
-      /*val staticRanks = chain.staticHITS(numIter, resetProb).vertices
-
-      assert(compareRanks(staticRanks, dynamicRanks) < errorTol)*/
-    }
-  }
 
 }
