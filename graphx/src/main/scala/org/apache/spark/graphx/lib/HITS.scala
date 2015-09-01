@@ -23,6 +23,7 @@ import scala.language.postfixOps
 import org.apache.spark.Logging
 import org.apache.spark.graphx._
 
+import scala.math._
 /**
  * HITS algorithm implementation. There are two implementations of HITS implemented.
  *
@@ -37,8 +38,8 @@ import org.apache.spark.graphx._
  * inlinks will have a HITS of alpha.
  */
 
+case class Score(authority: Double, hub: Double)
 object HITS extends Logging {
-
 
   /**
    * Run HITS for a fixed number of iterations returning a graph
@@ -53,7 +54,7 @@ object HITS extends Logging {
    *
    * @return the graph containing with each vertex containing the HITS
    */
-  def run[VD: ClassTag, ED: ClassTag](graph: Graph[VD, ED], numIter: Int): Graph[(Double, Double), String] =
+  def run[VD: ClassTag, ED: ClassTag](graph: Graph[VD, ED], numIter: Int): Graph[Score, ED] =
   {
     runWithOptions(graph, numIter)
   }
@@ -72,57 +73,72 @@ object HITS extends Logging {
    * @return the graph containing with each vertex containing the HITS
    */
   def runWithOptions[VD: ClassTag, ED: ClassTag](
-      graph: Graph[VD, ED], numIter: Int): Graph[(Double, Double), String] =
+      graph: Graph[VD, ED], numIter: Int): Graph[Score, ED] =
   {
-    //To do
     // Initialize the HITS graph with each edge attribute having
-    // each vertex with attribute 1.0.
-    /*var rankGraph: Graph[Double, Double] = graph
-      // Associate the degree with each vertex
-      .outerJoinVertices(graph.outDegrees) { (vid, vdata, deg) => deg.getOrElse(0) }
-      // Set the weight on the edges based on the degree
-      .mapTriplets( e => 1.0 / e.srcAttr, TripletFields.Src )
+    // each vertex with attribute of tuple(authority, hub) as (1.0, 1.0).
+    var hitsGraph: Graph[Score, ED] = graph
       // Set the vertex attributes to the initial pagerank values
-      .mapVertices( (id, attr) => resetProb )
+      .mapVertices( (id, attr) => Score(1.0, 1.0) )
 
-    val personalized = srcId isDefined
+    /*val personalized = srcId isDefined
     val src: VertexId = srcId.getOrElse(-1L)
-    def delta(u: VertexId, v: VertexId): Double = { if (u == v) 1.0 else 0.0 }
-
+*/
+    
     var iteration = 0
-    var prevRankGraph: Graph[Double, Double] = null
+    var preHITSGraph: Graph[Score, ED] = null
     while (iteration < numIter) {
-      rankGraph.cache()
+      hitsGraph.cache()
 
-      // Compute the outgoing rank contributions of each vertex, perform local preaggregation, and
-      // do the final aggregation at the receiving vertices. Requires a shuffle for aggregation.
-      val rankUpdates = rankGraph.aggregateMessages[Double](
-        ctx => ctx.sendToDst(ctx.srcAttr * ctx.attr), _ + _, TripletFields.Src)
+      // Compute the outgoing rank contributions of each vertex, perform local preaggregation, and do the final aggregation at the receiving vertices. Requires a shuffle for aggregation.
+      //update authority values
+      val authUpdates = hitsGraph.aggregateMessages[Double](
+        ctx => ctx.sendToDst(ctx.srcAttr.hub), _ + _, TripletFields.Src)
 
-      // Apply the final rank updates to get the new ranks, using join to preserve ranks of vertices
-      // that didn't receive a message. Requires a shuffle for broadcasting updated ranks to the
-      // edge partitions.
-      prevRankGraph = rankGraph
-      val rPrb = if (personalized) {
-        (src: VertexId , id: VertexId) => resetProb * delta(src, id)
-      } else {
-        (src: VertexId, id: VertexId) => resetProb
-      }
+      preHITSGraph = hitsGraph
 
-      rankGraph = rankGraph.joinVertices(rankUpdates) {
-        (id, oldRank, msgSum) => rPrb(src, id) + (1.0 - resetProb) * msgSum
+      //merge updated authority score into hitsGraph
+      hitsGraph = hitsGraph.joinVertices(authUpdates) {
+        (id, oldScore, msgSum) =>  Score(msgSum, oldScore.hub)
       }.cache()
 
-      rankGraph.edges.foreachPartition(x => {}) // also materializes rankGraph.vertices
+      hitsGraph.edges.foreachPartition(x => {}) // also materializes rankGraph.vertices
+      preHITSGraph.vertices.unpersist(false)
+      preHITSGraph.edges.unpersist(false)
+
+      //update hub values
+      val hubUpdates = hitsGraph.aggregateMessages[Double](
+        ctx => ctx.sendToSrc(ctx.srcAttr.authority), _ + _, TripletFields.Src)
+
+      preHITSGraph = hitsGraph
+
+      //merge updated hub score into hitsGraph
+      hitsGraph = hitsGraph.joinVertices(hubUpdates) {
+        (id, oldScore, msgSum) =>  Score(oldScore.authority, msgSum)
+      }.cache()
+
+      hitsGraph.edges.foreachPartition(x => {}) // also materializes rankGraph.vertices
+      preHITSGraph.vertices.unpersist(false)
+      preHITSGraph.edges.unpersist(false)
+
+      //calculate normalization factor
+      val normalizeAuth: Double = sqrt(hitsGraph.vertices.map{ case (id,score) => score.authority*score.authority}.reduce((a,b) => a+b))
+      val normalizeHub: Double = sqrt(hitsGraph.vertices.map{ case (id,score) => score.hub*score.hub}.reduce((a,b) => a+b))
+
+      preHITSGraph = hitsGraph
+
+      //reweighted the authority and hub score using the normalization factor
+      hitsGraph.mapVertices((id, attr) => Score(attr.authority/normalizeAuth, attr.hub/normalizeHub))
+
+      hitsGraph.edges.foreachPartition(x => {}) // also materializes rankGraph.vertices
       logInfo(s"HITS finished iteration $iteration.")
-      prevRankGraph.vertices.unpersist(false)
-      prevRankGraph.edges.unpersist(false)
+      preHITSGraph.vertices.unpersist(false)
+      preHITSGraph.edges.unpersist(false)
 
       iteration += 1
-    }*/
+    }
 
-    var HITSGraph: Graph[(Double, Double), String] = null
-    HITSGraph
+    hitsGraph
   }
 
 

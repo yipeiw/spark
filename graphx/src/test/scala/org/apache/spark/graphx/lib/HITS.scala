@@ -21,39 +21,58 @@ import org.apache.spark.SparkFunSuite
 import org.apache.spark.graphx._
 import org.apache.spark.graphx.util.GraphGenerators
 
+import scala.math._ 
 
+case class Score(authority: Double, hub: Double)
 object GridHITS {
-  def apply(nRows: Int, nCols: Int, nIter: Int): Seq[(VertexId, (Double, Double))] = {
+  def apply(nRows: Int, nCols: Int, nIter: Int): Seq[(VertexId, Score)] = {
     
-    /*val inNbrs = Array.fill(nRows * nCols)(collection.mutable.MutableList.empty[Int])
-    val outDegree = Array.fill(nRows * nCols)(0)
+    val inNbrs = Array.fill(nRows * nCols)(collection.mutable.MutableList.empty[Int])
+    val outNbrs = Array.fill(nRows * nCols)(collection.mutable.MutableList.empty[Int])
+
     // Convert row column address into vertex ids (row major order)
     def sub2ind(r: Int, c: Int): Int = r * nCols + c
     // Make the grid graph
     for (r <- 0 until nRows; c <- 0 until nCols) {
       val ind = sub2ind(r, c)
       if (r + 1 < nRows) {
-        outDegree(ind) += 1
-        inNbrs(sub2ind(r + 1, c)) += ind
+	val connectInd = sub2ind(r+1, c)
+        outNbrs(ind) += connectInd
+        inNbrs(connectInd) += ind
       }
       if (c + 1 < nCols) {
-        outDegree(ind) += 1
-        inNbrs(sub2ind(r, c + 1)) += ind
+	val connectInd = sub2ind(r, c + 1)
+        outNbrs(ind) += connectInd
+        inNbrs(connectInd) += ind
       }
     }
-    // compute the pagerank
-    var pr = Array.fill(nRows * nCols)(resetProb)
+    // compute the authority&hub using HITS
+    var auth = Array.fill(nRows * nCols)(1.0)
+    var hub = Array.fill(nRows * nCols)(1.0)
     for (iter <- 0 until nIter) {
-      val oldPr = pr
-      pr = new Array[Double](nRows * nCols)
-      for (ind <- 0 until (nRows * nCols)) {
-        pr(ind) = resetProb + (1.0 - resetProb) *
-          inNbrs(ind).map( nbr => oldPr(nbr) / outDegree(nbr)).sum
-      }
-    }*/
+      val oldAuth = auth
+      val oldHub = hub
+      auth = new Array[Double](nRows * nCols)
+      hub = new Array[Double](nRows * nCols)
 
-    // to do
-    var hits = Array.fill(nRos * nCols)((1.0, 1.0))
+      for (ind <- 0 until (nRows * nCols)) {
+        auth(ind) = inNbrs(ind).map( nbr => oldHub(nbr)).sum
+      }
+      val authTotal = sqrt(auth.map(v => v*v).sum)
+
+      for (ind <- 0 until (nRows * nCols)) {
+	hub(ind) = outNbrs(ind).map( nbr => auth(nbr)).sum
+      }
+      val hubTotal = sqrt(hub.map(v => v*v).sum)
+
+      auth = auth.map(v => v/authTotal)
+      hub = hub.map(v => v/hubTotal)
+    }
+
+    var hits = Array.fill(nRows * nCols)(Score(1.0, 1.0))
+    for (ind <- 0 until (nRows * nCols)) {
+      hits(ind) = Score(auth(ind), hub(ind))
+    }
     (0L until (nRows * nCols)).zip(hits)
   }
 
@@ -62,12 +81,10 @@ object GridHITS {
 
 class HITSSuite extends SparkFunSuite with LocalSparkContext {
 
-  def compareRanks(a: VertexRDD[Double], b: VertexRDD[Double]): Double = {
-    //a.leftJoin(b) { case (id, a, bOpt) => (a - bOpt.getOrElse(0.0)) * (a - bOpt.getOrElse(0.0)) }
-      //.map { case (id, error) => error }.sum()
+  def compareRanks(a: VertexRDD[Score], b: VertexRDD[Score]): Double = {
+    a.leftJoin(b) { case (id, a, bOpt) => (a._1 - bOpt.getOrElse((0.0, 0.0))._1) * (a._1 - bOpt.getOrElse((0.0, 0.0))._1) + (a._2 - bOpt.getOrElse((0.0, 0.0))._2) * (a._2 - bOpt.getOrElse((0.0, 0.0))._2) }
+      .map { case (id, error) => error }.sum()
 
-    //to do
-    return 0.0 
   }
 
   test("Star HITS") {
