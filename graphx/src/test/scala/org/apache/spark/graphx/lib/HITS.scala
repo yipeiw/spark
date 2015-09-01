@@ -19,11 +19,11 @@ package org.apache.spark.graphx.lib
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.graphx._
+import org.apache.spark.graphx.lib._
 import org.apache.spark.graphx.util.GraphGenerators
 
 import scala.math._ 
 
-case class Score(authority: Double, hub: Double)
 object GridHITS {
   def apply(nRows: Int, nCols: Int, nIter: Int): Seq[(VertexId, Score)] = {
     
@@ -46,7 +46,7 @@ object GridHITS {
         inNbrs(connectInd) += ind
       }
     }
-    // compute the authority&hub using HITS
+    // compute the authority&hub using HITS, the authority and hub value for each vertex are initialized as 1.0
     var auth = Array.fill(nRows * nCols)(1.0)
     var hub = Array.fill(nRows * nCols)(1.0)
     for (iter <- 0 until nIter) {
@@ -55,11 +55,13 @@ object GridHITS {
       auth = new Array[Double](nRows * nCols)
       hub = new Array[Double](nRows * nCols)
 
+      //update authority score for each vertex to be the sum of all the Hub scores of pages that point to it
       for (ind <- 0 until (nRows * nCols)) {
         auth(ind) = inNbrs(ind).map( nbr => oldHub(nbr)).sum
       }
       val authTotal = sqrt(auth.map(v => v*v).sum)
 
+      //update hub score for each vertex to be the sum of the Authority scores of all its linking pages
       for (ind <- 0 until (nRows * nCols)) {
 	hub(ind) = outNbrs(ind).map( nbr => auth(nbr)).sum
       }
@@ -102,7 +104,7 @@ class HITSSuite extends SparkFunSuite with LocalSparkContext {
       }.map { case (vid, test) => test }.sum()
       assert(notMatching === 0)
 
-      val refHub = 1/nVertices
+      val refHub = 1.0/nVertices
       val staticErrors = staticRanks2.map { case (vid, score) =>
         val hubDiff = math.abs(score.hub - refHub)
         val correct = (vid > 0 && score.authority == 0.0 && hubDiff < errorTol) || (vid == 0L && score.authority == 1.0 && score.hub == 0.0)

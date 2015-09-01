@@ -81,10 +81,6 @@ object HITS extends Logging {
       // Set the vertex attributes to the initial pagerank values
       .mapVertices( (id, attr) => Score(1.0, 1.0) )
 
-    /*val personalized = srcId isDefined
-    val src: VertexId = srcId.getOrElse(-1L)
-*/
-    
     var iteration = 0
     var preHITSGraph: Graph[Score, ED] = null
     while (iteration < numIter) {
@@ -98,8 +94,8 @@ object HITS extends Logging {
       preHITSGraph = hitsGraph
 
       //merge updated authority score into hitsGraph
-      hitsGraph = hitsGraph.joinVertices(authUpdates) {
-        (id, oldScore, msgSum) =>  Score(msgSum, oldScore.hub)
+      hitsGraph = hitsGraph.outerJoinVertices(authUpdates) {
+        (id, oldScore, msgOpt) =>  Score(msgOpt.getOrElse(0.0), oldScore.hub)
       }.cache()
 
       hitsGraph.edges.foreachPartition(x => {}) // also materializes rankGraph.vertices
@@ -108,13 +104,13 @@ object HITS extends Logging {
 
       //update hub values
       val hubUpdates = hitsGraph.aggregateMessages[Double](
-        ctx => ctx.sendToSrc(ctx.srcAttr.authority), _ + _, TripletFields.Src)
+        ctx => ctx.sendToSrc(ctx.dstAttr.authority), _ + _, TripletFields.Dst)
 
       preHITSGraph = hitsGraph
 
       //merge updated hub score into hitsGraph
-      hitsGraph = hitsGraph.joinVertices(hubUpdates) {
-        (id, oldScore, msgSum) =>  Score(oldScore.authority, msgSum)
+      hitsGraph = hitsGraph.outerJoinVertices(hubUpdates) {
+        (id, oldScore, msgOpt) =>  Score(oldScore.authority, msgOpt.getOrElse(0.0))
       }.cache()
 
       hitsGraph.edges.foreachPartition(x => {}) // also materializes rankGraph.vertices
@@ -122,8 +118,8 @@ object HITS extends Logging {
       preHITSGraph.edges.unpersist(false)
 
       //calculate normalization factor
-      val normalizeAuth: Double = sqrt(hitsGraph.vertices.map{ case (id,score) => score.authority*score.authority}.reduce((a,b) => a+b))
-      val normalizeHub: Double = sqrt(hitsGraph.vertices.map{ case (id,score) => score.hub*score.hub}.reduce((a,b) => a+b))
+      val normalizeAuth: Double = sqrt(hitsGraph.vertices.map{ case (id,score) => square(score.authority)}.reduce((a,b) => a+b))
+      val normalizeHub: Double = sqrt(hitsGraph.vertices.map{ case (id,score) => square(score.hub)}.reduce((a,b) => a+b))
 
       preHITSGraph = hitsGraph
 
