@@ -30,12 +30,32 @@ import scala.math._
  * The implementation uses the standalone [[Graph]] interface and runs HITS
  * for a fixed number of iterations:
  * {{{
+ * var Auth = Array.filll(n)(1.0)
+ * var Hub  = Array.fill(n)(1.0)
+ * var oldAuth = Array.fill(n)(1.0)
+ * var oldHub = Array.fill(n)(1.0)
+
+ * for( iter <- 0 until numIter) {
+ *   swap(oldAuth, Auth)
+ *   swap(oldHub, Hub)
+ *   for( i <- 0 until n) {
+ *     Auth[i] = inNbr[i].map(j => oldHub[j]).sum
+ *   } 
+ *   val totalAuth = sqrt(Auth.map(v => v*v).sum)
+
+ *   for( i <- 0 until n) {
+ *     Hub[i] = outNbr[i].map(j => Auth[j]).sum
+ *   }
+ *   val totalHub = sqrt(Hub.map(v => v*v).sum)
+
+ *   Auth.map(v => v/totalAuth)
+ *   Hub.map(v => v/totalHub)  
+ *   }
+ * }
  * }}}
  *
  * neighbors whick link to `i` and `outDeg[j]` is the out degree of vertex `j`.
  *
- * Note that this is not the "normalized" HITS and as a consequence pages that have no
- * inlinks will have a HITS of alpha.
  */
 
 case class Score(authority: Double, hub: Double)
@@ -118,13 +138,13 @@ object HITS extends Logging {
       preHITSGraph.edges.unpersist(false)
 
       //calculate normalization factor
-      val normalizeAuth: Double = sqrt(hitsGraph.vertices.map{ case (id,score) => square(score.authority)}.reduce((a,b) => a+b))
-      val normalizeHub: Double = sqrt(hitsGraph.vertices.map{ case (id,score) => square(score.hub)}.reduce((a,b) => a+b))
+      val normalizeAuth: Double = sqrt(hitsGraph.vertices.map{ case (id,score) => score.authority * score.authority}.reduce((a,b) => a + b))
+      val normalizeHub: Double = sqrt(hitsGraph.vertices.map{ case (id,score) => score.hub * score.hub}.reduce((a,b) => a + b))
 
       preHITSGraph = hitsGraph
 
       //reweighted the authority and hub score using the normalization factor
-      hitsGraph.mapVertices((id, attr) => Score(attr.authority/normalizeAuth, attr.hub/normalizeHub))
+      hitsGraph = hitsGraph.mapVertices((id, attr) => Score(attr.authority/normalizeAuth, attr.hub/normalizeHub))
 
       hitsGraph.edges.foreachPartition(x => {}) // also materializes rankGraph.vertices
       logInfo(s"HITS finished iteration $iteration.")
