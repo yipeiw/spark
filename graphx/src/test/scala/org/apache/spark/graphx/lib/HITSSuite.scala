@@ -22,11 +22,10 @@ import org.apache.spark.graphx._
 import org.apache.spark.graphx.lib._
 import org.apache.spark.graphx.util.GraphGenerators
 
-import scala.math._ 
+import scala.math._
 
 object GridHITS {
   def apply(nRows: Int, nCols: Int, nIter: Int): Seq[(VertexId, Score)] = {
-    
     val inNbrs = Array.fill(nRows * nCols)(collection.mutable.MutableList.empty[Int])
     val outNbrs = Array.fill(nRows * nCols)(collection.mutable.MutableList.empty[Int])
 
@@ -36,17 +35,18 @@ object GridHITS {
     for (r <- 0 until nRows; c <- 0 until nCols) {
       val ind = sub2ind(r, c)
       if (r + 1 < nRows) {
-	val connectInd = sub2ind(r+1, c)
+        val connectInd = sub2ind(r + 1, c)
         outNbrs(ind) += connectInd
         inNbrs(connectInd) += ind
       }
       if (c + 1 < nCols) {
-	val connectInd = sub2ind(r, c + 1)
+        val connectInd = sub2ind(r, c + 1)
         outNbrs(ind) += connectInd
         inNbrs(connectInd) += ind
       }
     }
-    // compute the authority&hub using HITS, the authority and hub value for each vertex are initialized as 1.0
+    // compute the authority&hub using HITS, the authority and hub value for each vertex
+    // are initialized as 1.0
     var auth = Array.fill(nRows * nCols)(1.0)
     var hub = Array.fill(nRows * nCols)(1.0)
     for (iter <- 0 until nIter) {
@@ -55,15 +55,17 @@ object GridHITS {
       auth = new Array[Double](nRows * nCols)
       hub = new Array[Double](nRows * nCols)
 
-      //update authority score for each vertex to be the sum of all the Hub scores of pages that point to it
+      // update authority score for each vertex to be
+      // the sum of all the Hub scores of pages that point to it
       for (ind <- 0 until (nRows * nCols)) {
         auth(ind) = inNbrs(ind).map( nbr => oldHub(nbr)).sum
       }
       val authTotal = sqrt(auth.map(v => v*v).sum)
 
-      //update hub score for each vertex to be the sum of the Authority scores of all its linking pages
+      // update hub score for each vertex to be
+      // the sum of the Authority scores of all its linking pages
       for (ind <- 0 until (nRows * nCols)) {
-	hub(ind) = outNbrs(ind).map( nbr => auth(nbr)).sum
+        hub(ind) = outNbrs(ind).map( nbr => auth(nbr)).sum
       }
       val hubTotal = sqrt(hub.map(v => v*v).sum)
 
@@ -84,9 +86,10 @@ object GridHITS {
 class HITSSuite extends SparkFunSuite with LocalSparkContext {
 
   def compareRanks(a: VertexRDD[Score], b: VertexRDD[Score]): Double = {
-    a.leftJoin(b) { case (id, a, bOpt) => pow(a.authority - bOpt.getOrElse(Score(0.0, 0.0)).authority, 2) + pow(a.hub - bOpt.getOrElse(Score(0.0, 0.0)).hub, 2) }
+    a.leftJoin(b) { case (id, a, bOpt) =>
+      pow(a.authority - bOpt.getOrElse(Score(0.0, 0.0)).authority, 2)
+      + pow(a.hub - bOpt.getOrElse(Score(0.0, 0.0)).hub, 2) }
       .map { case (id, error) => error }.sum()
-
   }
 
   test("Star HITS") {
@@ -99,16 +102,13 @@ class HITSSuite extends SparkFunSuite with LocalSparkContext {
       val staticRanks2 = starGraph.staticHITS(numIter = 2).vertices.cache()
 
       // Static HITS should only take 2 iterations to converge
-      val notMatching = staticRanks1.innerZipJoin(staticRanks2) { (vid, score1, score2) =>
-        if (score1.authority != score2.authority || score1.hub != score2.hub) 1 else 0
-      }.map { case (vid, test) => test }.sum()
-      assert(notMatching == 0)
+      assert(compareRanks(staticRanks1, staticRanks2) < errorTol)
 
       val refHub = 1.0/sqrt(nVertices-1)
-      val authError = staticRanks2.map{ case (vid, score) => vid*score.authority}.sum
-      assert(authError == 0)
-      val hubError = staticRanks2.map{ case (vid, score) => vid*(score.hub-refHub)}.sum
-      assert(hubError == 0)
+      val authError = staticRanks2.map{ case (vid, score) => vid * score.authority}.sum
+      assert(authError < errorTol)
+      val hubError = staticRanks2.map{ case (vid, score) => vid * (score.hub - refHub)}.sum
+      assert(hubError < errorTol)
     }
   } // end of test Star HITS
 
@@ -116,7 +116,7 @@ class HITSSuite extends SparkFunSuite with LocalSparkContext {
     withSpark { sc =>
       val rows = 10
       val cols = 10
-      val numIter = 50
+      val numIter = 5  // large number would be too slow
       val errorTol = 1.0e-5
       val gridGraph = GraphGenerators.gridGraph(sc, rows, cols).cache()
 

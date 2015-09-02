@@ -408,7 +408,8 @@ class GraphOps[VD: ClassTag, ED: ClassTag](graph: Graph[VD, ED]) extends Seriali
   }
 
   /**
-   * Run HITS for a fixed number of iterations returning a graph with vertex attributes containing the Authorities and Hub.
+   * Run HITS for a fixed number of iterations returning a graph
+   * with vertex attributes containing the Authorities and Hub.
    *
    * @see [[org.apache.spark.graphx.lib.HITS$#run]]
    */
