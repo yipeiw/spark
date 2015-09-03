@@ -19,11 +19,11 @@ package org.apache.spark.graphx.lib
 
 import scala.reflect.ClassTag
 import scala.language.postfixOps
+import scala.math._
 
 import org.apache.spark.Logging
 import org.apache.spark.graphx._
 
-import scala.math._
 /**
  * HITS (Hyperlink-Induced Topic Search) algorithm implementation..
  *
@@ -60,6 +60,7 @@ import scala.math._
  */
 
 case class Score(authority: Double, hub: Double)
+
 object HITS extends Logging {
 
   /**
@@ -76,34 +77,20 @@ object HITS extends Logging {
    */
   def run[VD: ClassTag, ED: ClassTag](graph: Graph[VD, ED], numIter: Int): Graph[Score, ED] =
   {
-    runWithOptions(graph, numIter)
-  }
-
-  /**
-   * Run HITS for a fixed number of iterations returning a graph
-   * with vertex attributes containing the authority and hub score.
-   *
-   * @tparam VD the original vertex attribute (not used)
-   * @tparam ED the original edge attribute (not used)
-   *
-   * @param graph the graph on which to compute using HITS algorithm
-   * @param numIter the number of iterations of HITS to run
-   *
-   * @return the graph containing with each vertex containing the authority score and hub score
-   */
-  def runWithOptions[VD: ClassTag, ED: ClassTag](
-      graph: Graph[VD, ED], numIter: Int): Graph[Score, ED] =
-  {
     // Initialize the HITS graph with each edge attribute having
     // each vertex with attribute of (authority=1.0, hub =1.0).
     var hitsGraph: Graph[Score, ED] = graph
       // Set the vertex attributes to the initial values
       .mapVertices( (id, attr) => Score(1.0, 1.0) )
 
+    // cache the edges of HITS graph;
+    // The edges are unchanged for HITS algorithm
+    hitsGraph.edges.cache()
+
     var iteration = 0
-    var preHITSGraph: Graph[Score, ED] = null
+    var preHITSVertices: VertexRDD[Score] = null
     while (iteration < numIter) {
-      hitsGraph.cache()
+      hitsGraph.vertices.cache()
 
       // update authority values by computing the incoming hub contributions of each vertex,
       // perform local preaggregation, and do the final aggregation at the receiving vertices.
@@ -111,16 +98,16 @@ object HITS extends Logging {
       val authUpdates = hitsGraph.aggregateMessages[Double](
         ctx => ctx.sendToDst(ctx.srcAttr.hub), _ + _, TripletFields.Src)
 
-      preHITSGraph = hitsGraph
+      preHITSVertices = hitsGraph.vertices
 
       // apply authority updates to get the new scores, using outerJoin to fill 0 for vertices
       // that didn't receive message.
       hitsGraph = hitsGraph.outerJoinVertices(authUpdates) {
         (id, oldScore, msgOpt) => Score(msgOpt.getOrElse(0.0), oldScore.hub)
-      }.cache()
+      }
+      hitsGraph.vertices.cache()
 
-      preHITSGraph.vertices.unpersist(false)
-      preHITSGraph.edges.unpersist(false)
+      preHITSVertices.unpersist(false)
 
       // update hub values by computing the outgoing authority contributions of each vertex,
       // perform local preaggregation, and do the final aggregation
@@ -128,36 +115,34 @@ object HITS extends Logging {
       val hubUpdates = hitsGraph.aggregateMessages[Double](
         ctx => ctx.sendToSrc(ctx.dstAttr.authority), _ + _, TripletFields.Dst)
 
-      preHITSGraph = hitsGraph
+      preHITSVertices = hitsGraph.vertices
 
       // apply hub updates to get new scores, using outerJoin to fill 0 for vertices
       // that didn't receive message
       hitsGraph = hitsGraph.outerJoinVertices(hubUpdates) {
         (id, oldScore, msgOpt) => Score(oldScore.authority, msgOpt.getOrElse(0.0))
-      }.cache()
+      }
+      hitsGraph.vertices.cache()
 
-      preHITSGraph.vertices.unpersist(false)
-      preHITSGraph.edges.unpersist(false)
+      preHITSVertices.unpersist(false)
 
       // Normalize the values by dividing each Hub score
       // by square root of the sum of the squares of all Hub scores,
       // and dividing each Authority score by square root of the sum of
       // the squares of all Authority scores.
       val normalizeAuth: Double = sqrt(hitsGraph.vertices
-        .map{ case (id, score) => score.authority * score.authority}
-        .reduce((a, b) => a + b))
+        .map{ case (id, score) => score.authority * score.authority}.sum)
       val normalizeHub: Double = sqrt(hitsGraph.vertices
-        .map{ case (id, score) => score.hub * score.hub}
-        .reduce((a, b) => a + b))
+        .map{ case (id, score) => score.hub * score.hub}.sum)
 
-      preHITSGraph = hitsGraph
+      preHITSVertices = hitsGraph.vertices
 
       hitsGraph = hitsGraph.mapVertices((id, attr) =>
         Score(attr.authority/normalizeAuth, attr.hub/normalizeHub))
+      hitsGraph.vertices.cache()
 
       logInfo(s"HITS finished iteration $iteration.")
-      preHITSGraph.vertices.unpersist(false)
-      preHITSGraph.edges.unpersist(false)
+      preHITSVertices.unpersist(false)
 
       iteration += 1
     }

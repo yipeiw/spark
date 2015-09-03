@@ -17,12 +17,12 @@
 
 package org.apache.spark.graphx.lib
 
+import scala.math._
+
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.graphx._
 import org.apache.spark.graphx.lib._
 import org.apache.spark.graphx.util.GraphGenerators
-
-import scala.math._
 
 object GridHITS {
   def apply(nRows: Int, nCols: Int, nIter: Int): Seq[(VertexId, Score)] = {
